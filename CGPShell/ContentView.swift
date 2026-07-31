@@ -60,6 +60,8 @@ struct ContentView: View {
                     SecureWebView(url: examPortalURL, onShortcutDetected: { shortcutName in
                         // Intercept event routed directly into the security engine
                         manager.registerShortcutViolation(keysPressed: shortcutName)
+                    }, onAssessmentStarted: { examId, studentId, sessionToken in
+                        manager.handleAssessmentStarted(examId: examId, studentId: studentId, sessionToken: sessionToken)
                     })
                     .edgesIgnoringSafeArea(.all)
 
