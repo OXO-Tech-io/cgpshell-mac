@@ -5,10 +5,21 @@ struct SecureWebView: NSViewRepresentable {
     let url: URL
     var onShortcutDetected: (String) -> Void // Tells the manager which shortcut was pressed
     var onAssessmentStarted: (String, String, String) -> Void // (examId, studentId, sessionToken) from the assessment_started bridge message
+    var ssoTokens: SSOTokens? // From opencgpshell:// launch — seeded before load so the frontend can skip showing Keycloak login again.
 
     func makeNSView(context: Context) -> WKWebView {
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.preferences.javaScriptEnabled = true
+
+        let contentController = WKUserContentController()
+
+        if let tokens = ssoTokens, let ssoScript = Self.ssoSeedScript(for: tokens) {
+            // Added first so it runs before the bridge/page scripts, on every
+            // origin the WebView navigates through (Keycloak, frontend, main
+            // app all use separate localStorage per-origin).
+            contentController.addUserScript(ssoScript)
+            SessionLogger.log("SecureWebView.makeNSView: SSO handoff tokens will be seeded before load (values redacted)")
+        }
 
         // Bridge: the frontend calls window.chrome.webview.postMessage(...), the WebView2
         // (Windows/Edge) host-messaging API. That object doesn't exist in WKWebView, so on
@@ -29,7 +40,6 @@ struct SecureWebView: NSViewRepresentable {
         } catch (e) {}
         """
         let bridgeScript = WKUserScript(source: bridgeScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
-        let contentController = WKUserContentController()
         contentController.addUserScript(bridgeScript)
         contentController.add(context.coordinator, name: "cgpBridge")
         webConfiguration.userContentController = contentController
@@ -69,6 +79,39 @@ struct SecureWebView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
+    }
+
+    /// Seeds the SSO tokens into sessionStorage under the exact keys the
+    /// frontend reads once at app-mount to bootstrap Keycloak directly
+    /// (keycloak.init({ token, idToken, refreshToken, checkLoginIframe: false }))
+    /// instead of the normal check-sso redirect flow — confirmed by reading
+    /// the frontend's own bundle (index-B8M_rSm0.js): it does
+    /// sessionStorage.getItem("cgp_bootstrap_token"/"_id_token"/"_refresh_token")
+    /// once and immediately clears them.
+    private static func ssoSeedScript(for tokens: SSOTokens) -> WKUserScript? {
+        func jsStringLiteral(_ value: String) -> String? {
+            guard let data = try? JSONSerialization.data(withJSONObject: [value]),
+                  let arrayLiteral = String(data: data, encoding: .utf8) else { return nil }
+            return String(arrayLiteral.dropFirst().dropLast()) // strip the [ ] JSONSerialization wraps it in
+        }
+
+        guard let accessTokenLiteral = jsStringLiteral(tokens.accessToken) else { return nil }
+        var statements = ["sessionStorage.setItem('cgp_bootstrap_token', \(accessTokenLiteral));"]
+        if let idToken = tokens.idToken, let literal = jsStringLiteral(idToken) {
+            statements.append("sessionStorage.setItem('cgp_bootstrap_id_token', \(literal));")
+        }
+        if let refreshToken = tokens.refreshToken, let literal = jsStringLiteral(refreshToken) {
+            statements.append("sessionStorage.setItem('cgp_bootstrap_refresh_token', \(literal));")
+        }
+
+        let source = """
+        (function() {
+            try {
+                \(statements.joined(separator: "\n                "))
+            } catch (e) {}
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {

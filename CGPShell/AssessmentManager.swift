@@ -8,6 +8,12 @@ final class AssessmentManager: ObservableObject {
     @Published var errorMessage = ""
     @Published var showExitModal = false
 
+    // Set by handleSSOHandoff(_:) when the app is launched via opencgpshell://
+    // from the exam portal's "Begin Assessment" button. Read once by
+    // ContentView when constructing SecureWebView, to seed the tokens into the
+    // WebView before the exam page loads.
+    @Published var pendingSSOTokens: SSOTokens?
+
     // Violation Engine Tracking flags
     @Published var violationCount = 0
     @Published var showViolationWarning = false
@@ -52,6 +58,19 @@ final class AssessmentManager: ObservableObject {
         Task {
             await registerSessionAndReportStart()
         }
+    }
+
+    /// Entry point for the opencgpshell:// launch (see ContentView.onOpenURL).
+    /// Stashes the SSO tokens for SecureWebView to seed, then jumps straight
+    /// into the exam view — skipping the manual "Launch Secure Exam" landing
+    /// screen, matching the ticket's "candidate doesn't need to relogin, the
+    /// assessment will appear and they can start it" flow.
+    func handleSSOHandoff(_ tokens: SSOTokens) {
+        // access/refresh/id tokens are bearer credentials — never logged, held
+        // only long enough to hand to SecureWebView for seeding.
+        SessionLogger.log("SSO handoff received via opencgpshell:// (tokens redacted)")
+        self.pendingSSOTokens = tokens
+        startSecureExam()
     }
 
     func startSecureExam() {
