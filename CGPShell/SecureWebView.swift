@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AVFoundation
 
 struct SecureWebView: NSViewRepresentable {
     let url: URL
@@ -48,8 +49,17 @@ struct SecureWebView: NSViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: webConfiguration)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.isInspectable = false
         webView.customUserAgent = "SecureExamBrowser-MacOS-Native-1.0"
+
+        // Ask for microphone access up front, with the anti-cheat refocus
+        // handler suspended (see AppDelegate.isAwaitingSystemPermissionPrompt)
+        // so the system "CGPShell would like to access the microphone" dialog
+        // can actually keep focus long enough for the user to respond to it,
+        // instead of getting its focus stolen back and staying invisible
+        // until the app quits.
+        Self.requestMicrophonePermissionIfNeeded()
         
         // 1. KEYBOARD TRAP: Intercepts shortcuts before they can execute
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
@@ -79,6 +89,21 @@ struct SecureWebView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
+    }
+
+    private static func requestMicrophonePermissionIfNeeded() {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        guard status == .notDetermined else {
+            SessionLogger.log("SecureWebView: microphone permission already resolved (\(status.rawValue)), skipping prompt")
+            return
+        }
+        AppDelegate.isAwaitingSystemPermissionPrompt = true
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            DispatchQueue.main.async {
+                AppDelegate.isAwaitingSystemPermissionPrompt = false
+                SessionLogger.log("SecureWebView: microphone permission \(granted ? "granted" : "denied")")
+            }
+        }
     }
 
     /// Seeds the SSO tokens into sessionStorage under the exact keys the
@@ -114,11 +139,18 @@ struct SecureWebView: NSViewRepresentable {
         return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: SecureWebView
 
         init(_ parent: SecureWebView) {
             self.parent = parent
+        }
+
+        // WebKit's own internal capture-permission gate, separate from the OS
+        // TCC dialog — grant it here since the OS-level prompt (see
+        // requestMicrophonePermissionIfNeeded) is the real gatekeeper.
+        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            decisionHandler(.grant)
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

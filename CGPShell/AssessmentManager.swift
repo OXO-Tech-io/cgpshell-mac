@@ -60,7 +60,7 @@ final class AssessmentManager: ObservableObject {
         }
     }
 
-    /// Entry point for the opencgpshell:// launch (see ContentView.onOpenURL).
+    /// Entry point for the cgpshell:// launch (see ContentView.onOpenURL).
     /// Stashes the SSO tokens for SecureWebView to seed, then jumps straight
     /// into the exam view — skipping the manual "Launch Secure Exam" landing
     /// screen, matching the ticket's "candidate doesn't need to relogin, the
