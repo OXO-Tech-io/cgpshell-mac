@@ -60,6 +60,8 @@ struct ContentView: View {
                     SecureWebView(url: examPortalURL, onShortcutDetected: { shortcutName in
                         // Intercept event routed directly into the security engine
                         manager.registerShortcutViolation(keysPressed: shortcutName)
+                    }, onAssessmentStarted: { examId, studentId, sessionToken in
+                        manager.handleAssessmentStarted(examId: examId, studentId: studentId, sessionToken: sessionToken)
                     })
                     .edgesIgnoringSafeArea(.all)
 
@@ -137,21 +139,10 @@ struct ContentView: View {
                         .foregroundColor(.gray)
                         .multilineTextAlignment(.center)
                     
-                    TextEditor(text: $inputReason)
-                        .frame(height: 80)
-                        .border(Color.gray.opacity(0.2))
+                    TextField("Type a clear reason for terminating the exam early...", text: $inputReason, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(3...6)
                         .padding(.horizontal)
-                        .overlay(
-                            Group {
-                                if inputReason.isEmpty {
-                                    Text("Type clear reason for terminating exam early...")
-                                        .foregroundColor(.gray.opacity(0.5))
-                                        .padding(.horizontal, 20)
-                                        .padding(.vertical, 8)
-                                        .allowsHitTesting(false)
-                                }
-                            }, alignment: .topLeading
-                        )
                     
                     if !modalErrorMessage.isEmpty {
                         Text(modalErrorMessage)
