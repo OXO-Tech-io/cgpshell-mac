@@ -8,6 +8,14 @@ struct SecureWebView: NSViewRepresentable {
     var onAssessmentStarted: (String, String, String) -> Void // (examId, studentId, sessionToken) from the assessment_started bridge message
     var ssoTokens: SSOTokens? // From opencgpshell:// launch — seeded before load so the frontend can skip showing Keycloak login again.
 
+    // Exact hostname match, not substring — `contains` would also match
+    // e.g. "cgp-assessment-frontend-app-...run.app.attacker.example".
+    static let allowedHosts: Set<String> = [
+        "cgp-assessment-frontend-app-297614602590.us-central1.run.app",
+        "keycloak-297614602590.us-central1.run.app", // Identity provider login page (Continue with Password / Sign in)
+        "cgp-main-app-297614602590.us-central1.run.app" // Exam/question content after assessment start
+    ]
+
     func makeNSView(context: Context) -> WKWebView {
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.preferences.javaScriptEnabled = true
@@ -40,7 +48,10 @@ struct SecureWebView: NSViewRepresentable {
             window.chrome.webview.postMessage({ event: 'cgpshell_bridge_ready', href: window.location.href });
         } catch (e) {}
         """
-        let bridgeScript = WKUserScript(source: bridgeScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        // forMainFrameOnly: true — no legitimate reason for a subframe (e.g. a
+        // third-party widget/ad embedded in an otherwise-allowed page) to be
+        // able to invoke the bridge and post fabricated shell events.
+        let bridgeScript = WKUserScript(source: bridgeScriptSource, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         contentController.addUserScript(bridgeScript)
         contentController.add(context.coordinator, name: "cgpBridge")
         webConfiguration.userContentController = contentController
@@ -136,7 +147,9 @@ struct SecureWebView: NSViewRepresentable {
             } catch (e) {}
         })();
         """
-        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        // forMainFrameOnly: true — these tokens must never be handed to a
+        // subframe; only the actual top-level frontend page needs them.
+        return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
@@ -197,20 +210,17 @@ struct SecureWebView: NSViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if let url = navigationAction.request.url {
-                let allowedHosts = [
-                    "cgp-assessment-frontend-app-297614602590.us-central1.run.app",
-                    "keycloak-297614602590.us-central1.run.app", // Identity provider login page (Continue with Password / Sign in)
-                    "cgp-main-app-297614602590.us-central1.run.app" // Exam/question content after assessment start
-                ]
-                if let host = url.host, allowedHosts.contains(where: { host.contains($0) }) {
-                    SessionLogger.log("Navigation ALLOWED -> \(url.absoluteString)")
-                    decisionHandler(.allow)
-                    return
-                }
-                SessionLogger.log("Navigation BLOCKED -> \(url.absoluteString) (host: \(url.host ?? "nil"))")
+            guard let url = navigationAction.request.url,
+                  url.scheme?.lowercased() == "https",
+                  let host = url.host?.lowercased(),
+                  SecureWebView.allowedHosts.contains(host) else {
+                let url = navigationAction.request.url
+                SessionLogger.log("Navigation BLOCKED -> \(url?.absoluteString ?? "nil") (host: \(url?.host ?? "nil"))")
+                decisionHandler(.cancel) // Blocks navigating to outside websites
+                return
             }
-            decisionHandler(.cancel) // Blocks navigating to outside websites
+            SessionLogger.log("Navigation ALLOWED -> \(url.absoluteString)")
+            decisionHandler(.allow)
         }
     }
 }
