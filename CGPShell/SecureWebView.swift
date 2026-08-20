@@ -198,15 +198,27 @@ struct SecureWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             if let url = navigationAction.request.url {
-                let allowedHosts = [
-                    "cgp-assessment-frontend-app-297614602590.us-central1.run.app",
-                    "keycloak-297614602590.us-central1.run.app", // Identity provider login page (Continue with Password / Sign in)
-                    "cgp-main-app-297614602590.us-central1.run.app" // Exam/question content after assessment start
-                ]
-                if let host = url.host, allowedHosts.contains(where: { host.contains($0) }) {
-                    SessionLogger.log("Navigation ALLOWED -> \(url.absoluteString)")
-                    decisionHandler(.allow)
-                    return
+                private static let allowedHosts: Set<String> = [
+    "cgp-assessment-frontend-app-297614602590.us-central1.run.app",
+    "keycloak-297614602590.us-central1.run.app",
+    "cgp-main-app-297614602590.us-central1.run.app"
+]
+
+func webView(
+    _ webView: WKWebView,
+    decidePolicyFor navigationAction: WKNavigationAction,
+    decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+) {
+    guard let url = navigationAction.request.url,
+          url.scheme?.lowercased() == "https",
+          let host = url.host?.lowercased(),
+          Self.allowedHosts.contains(host) else {
+        decisionHandler(.cancel)
+        return
+    }
+
+    decisionHandler(.allow)
+}
                 }
                 SessionLogger.log("Navigation BLOCKED -> \(url.absoluteString) (host: \(url.host ?? "nil"))")
             }
