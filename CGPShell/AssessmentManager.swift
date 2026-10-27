@@ -204,7 +204,19 @@ final class AssessmentManager: ObservableObject {
                 SessionLogger.log("Security event seq=\(seqNo) REJECTED: \(response.reason ?? "unknown")")
             }
         } catch {
-            SessionLogger.log("Security event seq=\(seqNo) FAILED to send: \(error.localizedDescription)")
+            SessionLogger.log(
+                "registerSessionAndReportStart FAILED: \(error.localizedDescription)"
+            )
+            if let session = activeSession {
+                session.end()
+            }
+            activeSession = nil
+            isExamActive = false
+            examId = ""
+            studentId = ""
+            sessionToken = ""
+            errorMessage =
+                "Could not establish a secure exam session. Check connectivity and try again."
         }
     }
 
