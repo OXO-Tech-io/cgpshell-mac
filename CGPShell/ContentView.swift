@@ -10,6 +10,31 @@ struct ContentView: View {
 
     let examPortalURL = URL(string: "https://cgp-assessment-frontend-app-297614602590.us-central1.run.app/")!
 
+    /// When launched via cgpshell://start?path=...&assignment_id=..., load the
+    /// frontend directly at that route/assignment instead of the bare root —
+    /// the frontend reads assignment_id from its own URL query string
+    /// (see Qa() in the frontend bundle: n.get("assignment_id")).
+    private var resolvedExamURL: URL {
+        guard let tokens = manager.pendingSSOTokens,
+              var components = URLComponents(url: examPortalURL, resolvingAgainstBaseURL: false) else {
+            return examPortalURL
+        }
+        if let path = tokens.path, !path.isEmpty {
+            components.path = "/" + path
+        }
+        var queryItems = components.queryItems ?? []
+        if let assignmentId = tokens.assignmentId, !assignmentId.isEmpty {
+            queryItems.append(URLQueryItem(name: "assignment_id", value: assignmentId))
+        }
+        for (key, value) in tokens.extraParams {
+            queryItems.append(URLQueryItem(name: key, value: value))
+        }
+        if !queryItems.isEmpty {
+            components.queryItems = queryItems
+        }
+        return components.url ?? examPortalURL
+    }
+
     var body: some View {
         ZStack {
             if !manager.isExamActive {
@@ -57,12 +82,12 @@ struct ContentView: View {
             } else {
                 // Exam Layout Layer
                 ZStack(alignment: .topTrailing) {
-                    SecureWebView(url: examPortalURL, onShortcutDetected: { shortcutName in
+                    SecureWebView(url: resolvedExamURL, onShortcutDetected: { shortcutName in
                         // Intercept event routed directly into the security engine
                         manager.registerShortcutViolation(keysPressed: shortcutName)
                     }, onAssessmentStarted: { examId, studentId, sessionToken in
                         manager.handleAssessmentStarted(examId: examId, studentId: studentId, sessionToken: sessionToken)
-                    })
+                    }, ssoTokens: manager.pendingSSOTokens)
                     .edgesIgnoringSafeArea(.all)
 
                     Button(action: {
@@ -180,6 +205,15 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name("SystemSwitchAttempted"))) { _ in
             if manager.isExamActive {
                 manager.registerShortcutViolation(keysPressed: "Global System Key (Fn+Q / Workspace Switch)")
+            }
+        }
+        .onOpenURL { url in
+            // Fired when the exam portal's "Begin Assessment" button launches
+            // us via opencgpshell://... (same pattern as msteams://) — skips
+            // the manual landing screen and jumps straight into the exam with
+            // the already-issued Keycloak tokens.
+            if let tokens = SSOHandoffParser.parse(url) {
+                manager.handleSSOHandoff(tokens)
             }
         }
         .frame(minWidth: 800, minHeight: 600)

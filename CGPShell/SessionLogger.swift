@@ -1,12 +1,21 @@
 import Foundation
 
 enum SessionLogger {
-    // NOT ~/Desktop: that folder requires a one-time TCC consent prompt per app,
-    // and writes fail silently (no prompt at all) for ad-hoc/dev-signed builds.
-    // The home directory root needs no special permission.
-    static let logFileURL: URL = FileManager.default
-        .homeDirectoryForCurrentUser
-        .appendingPathComponent("sessionLog.txt")
+    // NOT ~/sessionLog.txt or ~/Desktop: this target has App Sandbox enabled
+    // (com.apple.security.app-sandbox, see the project's build settings), and
+    // its only file entitlement is files.user-selected.read-only — writing to
+    // an arbitrary home-directory path is silently denied under sandbox (the
+    // catch block below swallows it, visible only via Console.app/NSLog).
+    // Application Support is inside the app's own sandbox container, which
+    // FileManager's .applicationSupportDirectory lookup transparently resolves
+    // to under sandbox — always writable with zero extra entitlements.
+    static let logFileURL: URL = {
+        let supportDir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first!
+        try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        return supportDir.appendingPathComponent("sessionLog.txt")
+    }()
 
     static func log(_ message: String) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
